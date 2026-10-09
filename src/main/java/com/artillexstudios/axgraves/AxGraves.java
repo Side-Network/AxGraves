@@ -10,6 +10,8 @@ import com.artillexstudios.axapi.libs.boostedyaml.settings.updater.UpdaterSettin
 import com.artillexstudios.axapi.metrics.AxMetrics;
 import com.artillexstudios.axapi.utils.MessageUtils;
 import com.artillexstudios.axapi.utils.featureflags.FeatureFlags;
+import com.artillexstudios.axapi.utils.file.FileUtils;
+import com.artillexstudios.axapi.utils.logging.LoggerNameFormat;
 import com.artillexstudios.axgraves.commands.CommandManager;
 import com.artillexstudios.axgraves.grave.Grave;
 import com.artillexstudios.axgraves.grave.GravePlaceholders;
@@ -18,7 +20,6 @@ import com.artillexstudios.axgraves.listeners.DeathListener;
 import com.artillexstudios.axgraves.listeners.PlayerInteractListener;
 import com.artillexstudios.axgraves.schedulers.SaveGraves;
 import com.artillexstudios.axgraves.schedulers.TickGraves;
-import com.artillexstudios.axgraves.utils.UpdateNotifier;
 import org.bstats.bukkit.Metrics;
 
 import java.io.File;
@@ -32,9 +33,31 @@ public final class AxGraves extends AxPlugin {
     public static MessageUtils MESSAGEUTILS;
     public static ScheduledExecutorService EXECUTOR = Executors.newSingleThreadScheduledExecutor();
     private static AxMetrics metrics;
+    private static boolean debugMode;
+
+    public static boolean isDebugMode() {
+        return debugMode;
+    }
+
+    public static void setDebugMode(boolean debugMode) {
+        AxGraves.debugMode = debugMode;
+    }
 
     public static AxPlugin getInstance() {
         return instance;
+    }
+
+    @Override
+    public void load() {
+        // remove legacy libs
+        File libs = new File(getDataFolder(), "libs");
+        if (libs.exists()) {
+            FileUtils.deleteNested(libs.toPath());
+        }
+        File lib = new File(getDataFolder(), "lib");
+        if (lib.exists()) {
+            FileUtils.deleteNested(lib.toPath());
+        }
     }
 
     public void enable() {
@@ -45,9 +68,10 @@ public final class AxGraves extends AxPlugin {
         CONFIG = new Config(new File(getDataFolder(), "config.yml"), getResource("config.yml"), GeneralSettings.builder().setUseDefaults(false).build(), LoaderSettings.builder().setAutoUpdate(true).build(), DumperSettings.DEFAULT, UpdaterSettings.builder().setVersioning(new BasicVersioning("version")).build());
         LANG = new Config(new File(getDataFolder(), "messages.yml"), getResource("messages.yml"), GeneralSettings.builder().setUseDefaults(false).build(), LoaderSettings.builder().setAutoUpdate(true).build(), DumperSettings.DEFAULT, UpdaterSettings.builder().setVersioning(new BasicVersioning("version")).build());
 
+        debugMode = CONFIG.getBoolean("debug", false);
         MESSAGEUTILS = new MessageUtils(LANG.getBackingDocument(), "prefix", CONFIG.getBackingDocument());
 
-        getServer().getPluginManager().registerEvents(new DeathListener(), this);
+        new DeathListener();
         getServer().getPluginManager().registerEvents(new PlayerInteractListener(), this);
 
         CommandManager.load();
@@ -63,7 +87,6 @@ public final class AxGraves extends AxPlugin {
         metrics = new AxMetrics(this, 20);
         metrics.start();
 
-        if (CONFIG.getBoolean("update-notifier.enabled", true)) new UpdateNotifier(this, 5076);
     }
 
     public void disable() {
@@ -86,11 +109,12 @@ public final class AxGraves extends AxPlugin {
     }
 
     public void updateFlags() {
-        FeatureFlags.USE_LEGACY_HEX_FORMATTER.set(true);
         FeatureFlags.PACKET_ENTITY_TRACKER_ENABLED.set(true);
         FeatureFlags.HOLOGRAM_UPDATE_TICKS.set(5L);
+        FeatureFlags.PACKET_ENTITY_TRACKER_THREADS.set(1);
         FeatureFlags.ENABLE_PACKET_LISTENERS.set(true);
         FeatureFlags.PLACEHOLDER_API_HOOK.set(true);
-        FeatureFlags.PLACEHOLDER_API_IDENTIFIER.set("AxGraves");
+        FeatureFlags.PLACEHOLDER_API_IDENTIFIER.set("axgraves");
+        FeatureFlags.LOGGER_NAME_FORMAT.set(LoggerNameFormat.NAMEABLE);
     }
 }

@@ -5,8 +5,11 @@ import com.artillexstudios.axapi.utils.StringUtils;
 import com.artillexstudios.axgraves.grave.Grave;
 import com.artillexstudios.axgraves.grave.SpawnedGraves;
 import com.artillexstudios.axgraves.utils.LimitUtils;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.scheduler.BukkitTask;
@@ -14,26 +17,26 @@ import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.inventory.ItemFlag;
 import org.jetbrains.annotations.NotNull;
+import xyz.xenondevs.invui.Click;
 import xyz.xenondevs.invui.gui.Gui;
+import xyz.xenondevs.invui.gui.Markers;
 import xyz.xenondevs.invui.gui.PagedGui;
-import xyz.xenondevs.invui.gui.structure.Markers;
+import xyz.xenondevs.invui.item.AbstractItem;
+import xyz.xenondevs.invui.item.BoundItem;
 import xyz.xenondevs.invui.item.Item;
+import xyz.xenondevs.invui.item.ItemBuilder;
 import xyz.xenondevs.invui.item.ItemProvider;
-import xyz.xenondevs.invui.item.builder.ItemBuilder;
-import xyz.xenondevs.invui.item.impl.AbstractItem;
-import xyz.xenondevs.invui.item.impl.SimpleItem;
-import xyz.xenondevs.invui.item.impl.controlitem.PageItem;
 import xyz.xenondevs.invui.window.Window;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import static com.artillexstudios.axgraves.AxGraves.CONFIG;
@@ -42,7 +45,7 @@ import static com.artillexstudios.axgraves.AxGraves.getInstance;
 
 public final class GravesGui {
 
-    private static final Item BORDER = new SimpleItem(new ItemBuilder(Material.BLACK_STAINED_GLASS_PANE).setDisplayName(" "));
+    private static final Item BORDER = Item.simple(new ItemBuilder(Material.BLACK_STAINED_GLASS_PANE).hideTooltip(true));
 
     private static Economy economy;
 
@@ -67,7 +70,7 @@ public final class GravesGui {
             .map(grave -> (Item) new GraveItem(grave, limit))
             .collect(Collectors.toList());
 
-        Gui gui = PagedGui.items()
+        PagedGui<Item> gui = PagedGui.itemsBuilder()
             .setStructure(
                 "# # # # # # # # #",
                 "# x x x x x x x #",
@@ -75,53 +78,40 @@ public final class GravesGui {
             )
             .addIngredient('#', BORDER)
             .addIngredient('x', Markers.CONTENT_LIST_SLOT_HORIZONTAL)
-            .addIngredient('<', new BackItem())
-            .addIngredient('>', new ForwardItem())
+            .addIngredient('<', pageItem(false))
+            .addIngredient('>', pageItem(true))
             .setContent(content)
             .build();
 
-        Window.single()
+        if (page > 0) {
+            gui.setPage(page);
+        }
+
+        Window.builder()
             .setViewer(player)
-            .setTitle("§0Your Graves")
-            .setGui(gui)
+            .setTitle(legacy("§0Your Graves"))
+            .setUpperGui(gui)
             .build()
             .open();
-
-        if (gui instanceof PagedGui<?> pagedGui && page > 0) {
-            pagedGui.setPage(page);
-        }
     }
 
-    public static class ForwardItem extends PageItem {
-
-        public ForwardItem() {
-            super(true);
-        }
-
-        @Override
-        public ItemProvider getItemProvider(PagedGui<?> gui) {
-            return new ItemBuilder(Material.ARROW)
-                .setDisplayName("§7Next")
-                .addLoreLines(gui.hasNextPage()
-                    ? "Page " + (gui.getCurrentPage() + 2) + "/" + gui.getPageAmount()
-                    : "No more pages");
-        }
+    private static Component legacy(String text) {
+        return LegacyComponentSerializer.legacySection().deserialize(text);
     }
 
-    public static class BackItem extends PageItem {
-
-        public BackItem() {
-            super(false);
-        }
-
-        @Override
-        public ItemProvider getItemProvider(PagedGui<?> gui) {
-            return new ItemBuilder(Material.ARROW)
-                .setDisplayName("§7Previous")
-                .addLoreLines(gui.hasPreviousPage()
-                    ? "Page " + (gui.getCurrentPage() + 1) + "/" + gui.getPageAmount()
-                    : "No previous page");
-        }
+    private static Item pageItem(boolean forward) {
+        return BoundItem.pagedBuilder()
+            .setItemProvider((viewer, gui) -> {
+                boolean has = forward ? gui.getPage() < gui.getPageCount() - 1 : gui.getPage() > 0;
+                String lore = has
+                    ? "Page " + (gui.getPage() + (forward ? 2 : 1)) + "/" + gui.getPageCount()
+                    : (forward ? "No more pages" : "No previous page");
+                return new ItemBuilder(Material.ARROW)
+                    .setLegacyName(forward ? "§7Next" : "§7Previous")
+                    .addLegacyLoreLines(lore);
+            })
+            .addClickHandler((item, gui, click) -> gui.setPage(gui.getPage() + (forward ? 1 : -1)))
+            .build();
     }
 
     private static final class GraveItem extends AbstractItem {
@@ -134,7 +124,7 @@ public final class GravesGui {
         }
 
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(@NotNull Player viewer) {
             Location l = grave.getLocation();
 
             int dTime = CONFIG.getInt("despawn-time-seconds", 180);
@@ -151,8 +141,8 @@ public final class GravesGui {
             double price = CONFIG.getDouble("graves-gui.teleport-price", 0.0D);
 
             ItemBuilder builder = new ItemBuilder(Material.CHEST)
-                .setDisplayName("§fGrave §7(" + l.getWorld().getName() + " " + l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ() + ")")
-                .addLoreLines(
+                .setLegacyName("§fGrave §7(" + l.getWorld().getName() + " " + l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ() + ")")
+                .addLegacyLoreLines(
                     "§7Owner: §e" + grave.getPlayerName(),
                     "§7Time left: §e" + timeLeft,
                     "§7Items: §e" + grave.countItems(),
@@ -160,14 +150,13 @@ public final class GravesGui {
                     " ",
                     "§aClick to teleport",
                     "§7Price: §a" + String.format(Locale.US, "%.2f", price) + "⛁"
-                )
-                .addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+                );
 
             return builder;
         }
 
         @Override
-        public void handleClick(@NotNull ClickType clickType, @NotNull Player player, @NotNull InventoryClickEvent event) {
+        public void handleClick(@NotNull ClickType clickType, @NotNull Player player, @NotNull Click click) {
             if (!clickType.isLeftClick() && !clickType.isRightClick()) {
                 return;
             }
@@ -181,14 +170,19 @@ public final class GravesGui {
         int warmup = CONFIG.getInt("graves-gui.teleport-warmup-seconds", 3);
 
         Location target = grave.getLocation().clone().add(0, 0.5, 0);
-        boolean safe = isSafe(target);
+        if (target.getWorld() == null) return;
 
-        if (!safe && CONFIG.getBoolean("graves-gui.unsafe-teleport-requires-confirm", true)) {
-            openConfirmTeleport(player, grave, price, warmup, target);
-            return;
-        }
+        // load the grave chunk off the main thread before reading its blocks
+        target.getWorld().getChunkAtAsync(target).thenAccept(chunk -> {
+            if (!player.isOnline()) return;
 
-        startWarmup(player, target, price, warmup);
+            if (!isSafe(target) && CONFIG.getBoolean("graves-gui.unsafe-teleport-requires-confirm", true)) {
+                openConfirmTeleport(player, grave, price, warmup, target);
+                return;
+            }
+
+            startWarmup(player, target, price, warmup);
+        });
     }
 
     private static boolean isSafe(@NotNull Location loc) {
@@ -208,8 +202,8 @@ public final class GravesGui {
     private static void openConfirmTeleport(@NotNull Player player, @NotNull Grave grave, double price, int warmup, @NotNull Location target) {
         Item yes = new ClickItem(
             new ItemBuilder(Material.LIME_WOOL)
-                .setDisplayName("§aTELEPORT")
-                .addLoreLines(
+                .setLegacyName("§aTELEPORT")
+                .addLegacyLoreLines(
                     "§7Location seems unsafe.",
                     "§7Teleport anyway for §a" + String.format(Locale.US, "%.2f", price) + "§7?",
                     "§7You must stand still for §e" + warmup + "s§7."
@@ -221,23 +215,22 @@ public final class GravesGui {
 
         Item no = new ClickItem(
             new ItemBuilder(Material.RED_WOOL)
-                .setDisplayName("§cCANCEL"),
+                .setLegacyName("§cCANCEL"),
             GravesGui::open
         );
 
-        Gui gui = Gui.normal()
+        Gui gui = Gui.builder()
             .setStructure(
-                ". . Y . N . . ."
+                ". . Y . N . . . ."
             )
-            .addIngredient('.', new SimpleItem(new ItemBuilder(Material.AIR)))
             .addIngredient('Y', yes)
             .addIngredient('N', no)
             .build();
 
-        Window.single()
+        Window.builder()
             .setViewer(player)
-            .setTitle("§8Unsafe Teleport?")
-            .setGui(gui)
+            .setTitle(legacy("§8Unsafe Teleport?"))
+            .setUpperGui(gui)
             .build()
             .open();
     }
@@ -252,12 +245,12 @@ public final class GravesGui {
         }
 
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(@NotNull Player viewer) {
             return provider;
         }
 
         @Override
-        public void handleClick(@NotNull ClickType clickType, @NotNull Player player, @NotNull InventoryClickEvent event) {
+        public void handleClick(@NotNull ClickType clickType, @NotNull Player player, @NotNull Click click) {
             onClick.accept(player);
         }
     }
@@ -308,8 +301,7 @@ public final class GravesGui {
 
         if (warmupSeconds <= 0) {
             if (!withdraw(player, price)) return;
-            loadChunksAround(target);
-            PaperUtils.teleportAsync(player, target);
+            teleportWhenLoaded(player, target);
             return;
         }
 
@@ -357,8 +349,7 @@ public final class GravesGui {
                 if (pending.warmupTask != null) pending.warmupTask.cancel();
                 PENDING_TELEPORTS.remove(uuid);
                 if (!withdraw(player, price)) return;
-                loadChunksAround(pending.target);
-                PaperUtils.teleportAsync(player, pending.target);
+                teleportWhenLoaded(player, pending.target);
             }
         }, 10L, 10L);
 
@@ -366,19 +357,23 @@ public final class GravesGui {
     }
 
     /**
-     * Loads a 3x3 chunk area around the location so the client receives terrain before teleport
-     * and does not get stuck on "Loading terrain...".
+     * Loads a 3x3 chunk area around the location asynchronously, then teleports, so the client receives
+     * terrain before teleport and does not get stuck on "Loading terrain...", without blocking the main thread.
      */
-    private static void loadChunksAround(@NotNull Location loc) {
+    private static void teleportWhenLoaded(@NotNull Player player, @NotNull Location loc) {
         World world = loc.getWorld();
         if (world == null) return;
         int cx = loc.getBlockX() >> 4;
         int cz = loc.getBlockZ() >> 4;
+        List<CompletableFuture<Chunk>> futures = new ArrayList<>();
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                world.getChunkAt(cx + dx, cz + dz);
+                futures.add(world.getChunkAtAsync(cx + dx, cz + dz));
             }
         }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).thenRun(() -> {
+            if (player.isOnline()) PaperUtils.teleportAsync(player, loc);
+        });
     }
 
     private static boolean isSameBlock(@NotNull Location a, @NotNull Location b) {

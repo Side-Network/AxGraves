@@ -27,7 +27,6 @@ import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.enchantments.EnchantmentTarget;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.ExperienceOrb;
 import org.bukkit.entity.HumanEntity;
@@ -35,6 +34,7 @@ import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -58,9 +58,10 @@ public class Grave {
     private int storedXP;
     private final PacketEntity entity;
     private Hologram hologram;
+    private String texture;
     private boolean removed = false;
 
-    public Grave(Location loc, @NotNull OfflinePlayer offlinePlayer, @NotNull List<ItemStack> items, int storedXP, long date) {
+    public Grave(Location loc, @NotNull OfflinePlayer offlinePlayer, @NotNull List<ItemStack> items, int storedXP, long date, @Nullable String texture) {
         items = new ArrayList<>(items);
         items.removeIf(it -> {
             if (it == null) return true;
@@ -88,16 +89,25 @@ public class Grave {
             if (LANG.getBoolean("death-message.enabled", false)) {
                 MESSAGEUTILS.sendLang(pl, "death-message.message", Map.of("%world%", LocationUtils.getWorldName(location.getWorld()), "%x%", "" + location.getBlockX(), "%y%", "" + location.getBlockY(), "%z%", "" + location.getBlockZ()));
             }
+            if (texture == null) {
+                texture = Utils.getTexture(pl);
+            }
         }
         items.forEach(gui::addItem);
 
-        this.entity = NMSHandlers.getNmsHandler().createEntity(EntityType.ARMOR_STAND, location.clone().add(0, 1 + CONFIG.getFloat("head-height", -1.2f), 0));
-        entity.setItem(EquipmentSlot.HELMET, WrappedItemStack.wrap(Utils.getPlayerHead(offlinePlayer)));
+        Location cloned = location.clone();
+        cloned.add(0, 1 + CONFIG.getFloat("head-height", -1.2f), 0);
+        this.entity = NMSHandlers.getNmsHandler().createEntity(EntityType.ARMOR_STAND, cloned);
 
-        final ArmorStandMeta meta = (ArmorStandMeta) entity.meta();
-        meta.small(true);
-        meta.invisible(true);
-        meta.setNoBasePlate(false);
+        WrappedItemStack wrapped = Utils.getPlayerHead(texture);
+        this.texture = texture;
+        entity.setItem(EquipmentSlot.HELMET, wrapped);
+
+        if (entity.meta() instanceof ArmorStandMeta meta) {
+            meta.small(true);
+            meta.invisible(true);
+            meta.setNoBasePlate(false);
+        }
         entity.spawn();
 
         if (CONFIG.getBoolean("rotate-head-360", true)) {
@@ -136,6 +146,7 @@ public class Grave {
     }
 
     public void interact(@NotNull Player opener, ServerboundInteractWrapper.InteractionHand slot) {
+        if (opener.getLocation().distanceSquared(location) > 49) return;
         if (CONFIG.getBoolean("interact-only-own", false) && !opener.getUniqueId().equals(player.getUniqueId()) && !opener.hasPermission("axgraves.admin")) {
             MESSAGEUTILS.sendLang(opener, "interact.not-your-grave");
             return;
@@ -155,36 +166,38 @@ public class Grave {
             if (!CONFIG.getBoolean("enable-instant-pickup", true)) return;
             if (CONFIG.getBoolean("instant-pickup-only-own", false) && !opener.getUniqueId().equals(player.getUniqueId())) return;
 
+            PlayerInventory inventory = opener.getInventory();
             for (ItemStack it : gui.getContents()) {
                 if (it == null) continue;
 
                 if (CONFIG.getBoolean("auto-equip-armor", true)) {
-                    if ((EnchantmentTarget.ARMOR_HEAD.includes(it) || it.getType().equals(Material.TURTLE_HELMET)) && opener.getInventory().getHelmet() == null) {
-                        opener.getInventory().setHelmet(it);
+                    Material material = it.getType();
+                    if (isSlotEmpty(inventory.getHelmet()) && Utils.isHelmet(material)) {
+                        inventory.setHelmet(it);
                         it.setAmount(0);
                         continue;
                     }
 
-                    if ((EnchantmentTarget.ARMOR_TORSO.includes(it) || it.getType().equals(Material.ELYTRA)) && opener.getInventory().getChestplate() == null) {
-                        opener.getInventory().setChestplate(it);
+                    if (isSlotEmpty(inventory.getChestplate()) && Utils.isChestplate(material)) {
+                        inventory.setChestplate(it);
                         it.setAmount(0);
                         continue;
                     }
 
-                    if (EnchantmentTarget.ARMOR_LEGS.includes(it) && opener.getInventory().getLeggings() == null) {
-                        opener.getInventory().setLeggings(it);
+                    if (isSlotEmpty(inventory.getLeggings()) && Utils.isLeggings(material)) {
+                        inventory.setLeggings(it);
                         it.setAmount(0);
                         continue;
                     }
 
-                    if (EnchantmentTarget.ARMOR_FEET.includes(it) && opener.getInventory().getBoots() == null) {
-                        opener.getInventory().setBoots(it);
+                    if (isSlotEmpty(inventory.getBoots()) && Utils.isBoots(material)) {
+                        inventory.setBoots(it);
                         it.setAmount(0);
                         continue;
                     }
                 }
 
-                final Collection<ItemStack> ar = opener.getInventory().addItem(it).values();
+                final Collection<ItemStack> ar = inventory.addItem(it).values();
                 if (ar.isEmpty()) {
                     it.setAmount(0);
                     continue;
@@ -204,6 +217,11 @@ public class Grave {
         opener.openInventory(gui);
     }
 
+    private boolean isSlotEmpty(ItemStack item) {
+        if (item == null) return true;
+        return item.getType().isAir();
+    }
+
     public void updateHologram() {
         if (hologram != null) hologram.remove();
 
@@ -219,17 +237,15 @@ public class Grave {
         page.setEntityMetaHandler(m -> {
             TextDisplayMeta meta = (TextDisplayMeta) m;
             meta.seeThrough(section.getBoolean("see-through"));
+            meta.shadow(section.getBoolean("shadow", true));
             meta.alignment(TextDisplayMeta.Alignment.valueOf(section.getString("alignment").toUpperCase()));
             meta.backgroundColor(Integer.parseInt(section.getString("background-color"), 16));
             meta.lineWidth(1000);
-            if (section.getBoolean("shadow")) {
-                meta.shadow(true);
-            }
             meta.viewRange(section.getFloat("view-range"));
             meta.billboardConstrain(DisplayMeta.BillboardConstrain.valueOf(section.getString("billboard").toUpperCase()));
         });
 
-        page.setContent(String.join("<reset><br>", lines));
+        page.setContent(String.join("&r<br>", lines));
         page.spawn();
     }
 
@@ -314,6 +330,10 @@ public class Grave {
 
     public PacketEntity getEntity() {
         return entity;
+    }
+
+    public String getTexture() {
+        return texture;
     }
 
     public Hologram getHologram() {

@@ -1,7 +1,7 @@
 prefix: ""
 
 # how fast should the graves disappear
-# set to -1 to make graves last until the next server restart
+# set to -1 to make graves never despawn
 # in seconds
 despawn-time-seconds: 3600
 
@@ -150,27 +150,31 @@ graves-gui:
   # how long to wait before teleport (seconds). Movement cancels the teleport.
   teleport-warmup-seconds: 3
 
+# what event priority should the plugin use? if everything is working, no need to touch this
+# however if the plugin is spawning graves without items, you can try setting this to lower values (lower = runs earlier)
+# values: LOWEST, LOW, NORMAL, HIGH, HIGHEST, MONITOR
+# requires a restart to change
+death-listener-priority: HIGHEST
+
 # settings for holograms displays
 holograms:
   # set to 00000000 to make it invisible
   # format (hexadecimal): AARRGGBB
   background-color: 00000000
-  # shadow
-  shadow: true
   # list: left, right, center
   alignment: center
   # list: fixed, vertical, horizontal, center
   billboard: vertical
   # should blocks/entities be visible behind the displays?
   see-through: false
+  # should text have an outline?
+  shadow: true
 
   view-range: 10
 
-# should be plugin notify you if there is a new update?
-update-notifier:
-  # if enabled, it will display the message in the console
-  enabled: true
-  on-join: true
+# prints out a lot of information about the plugin in the console
+# this can cause a lot of spam, only use if a developer asks you to
+debug: false
 
 # do not edit
-version: 18
+version: 19
