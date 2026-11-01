@@ -3,6 +3,8 @@ version: '${project.version}'
 main: com.artillexstudios.axgraves.AxGraves
 api-version: '1.20'
 folia-supported: true
+# load after Worlds so graves in custom worlds aren't skipped and lost on startup
+softdepend: [Worlds, Vault]
 
 permissions:
   axgraves.help:
